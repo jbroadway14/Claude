@@ -8,6 +8,7 @@ and UK beekeeping (NBU notifiable diseases, VMD medicines record).
 - **Works with no signal** at the apiary once it has been opened once.
 - **Glove-friendly**: big tap buttons and +/− steppers instead of typing.
 - **Your data stays on your device** (IndexedDB), with JSON backup and CSV export.
+- **Optional GitHub sync**: records upload to a *private* GitHub repo when you have signal.
 
 ## Features
 
@@ -20,7 +21,8 @@ and UK beekeeping (NBU notifiable diseases, VMD medicines record).
 | Feeding & harvest | Syrup, fondant and pollen logs, plus honey weights per hive |
 | Due list | Upcoming inspections and treatment removals; **Add to calendar** downloads a `.ics` file for your phone's calendar |
 | Charts | Frames of bees and brood over time, plus a varroa history table |
-| Backup / sync | Download a JSON backup, then import it on another device. Imports merge, and the newest edit wins |
+| GitHub sync | Records are saved to a private repo of yours. Changes made offline are queued and upload automatically when signal returns. Every sync is a commit, so you get a full history |
+| Backup file | Download a JSON backup, then import it on another device. Imports merge, and the newest edit wins |
 
 ## Recommended fields
 
@@ -85,8 +87,39 @@ Date · supers/frames taken · honey weight (kg) · honey type (spring/OSR, summ
    - **Android (Chrome):** ⋮ → *Install app*
 5. Open it once with signal. After that it works offline.
 
-> **Back up!** Data lives in the phone's browser storage. Use *More → Download backup*
-> every few weeks (the app reminds you). On iPhone, save the file to Files or iCloud Drive.
+> **Back up!** Without GitHub sync, data lives only in the phone's browser storage.
+> Either turn on sync (below) or use *More → Download backup* every few weeks.
+
+## GitHub sync (your own database)
+
+Your records are stored as one JSON file (`hive-log.json`) in a **private** repo of
+yours. The app repo is public, so the data must never go there. The app refuses to
+sync to a public repo.
+
+**One-time setup:**
+1. Create a new **private** repo on GitHub, e.g. `hive-log-data`. Tick "Add a README"
+   or leave it empty; either works.
+2. Create a token at **GitHub → Settings → Developer settings → Personal access tokens →
+   Fine-grained tokens → Generate new token**:
+   - *Repository access*: **Only select repositories** → `hive-log-data`
+   - *Permissions → Repository permissions → Contents*: **Read and write**
+   - *Expiration*: up to a year (set a reminder to renew it)
+3. In the app go to **More → GitHub sync**, then enter your username, `hive-log-data` and
+   the token, and tap **Save & sync**.
+4. Do the same on any other device (computer, second phone) to keep them in step.
+
+**How it behaves:**
+- **Status pill in the header:** *Synced*, *Waiting to sync*, *Offline · queued* or *Sync error*.
+- **When it syncs:** a few seconds after each save, when signal comes back, when you
+  reopen the app, and with **Sync now**.
+- **Each sync:** downloads the file, merges it record by record (newest edit wins,
+  deletions carry across), then uploads the result as a commit, e.g. *"Hive Log sync from
+  Phone (42 records)"*. If two devices sync at the same moment, it re-downloads and merges again.
+- **Where the token lives:** only in that browser's storage. It is never included in
+  backups or in the synced file. It can only touch the one repo you chose, and you can
+  revoke it on GitHub at any time.
+- **Phones suspend web apps in the background**, so a queued change uploads the next
+  time the app is open with signal, not while it's closed.
 
 ## Running locally
 

@@ -258,6 +258,13 @@ let saveTimer = null;
 function save() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(writeState, 50);
+  changeSeq++;
+  if (syncReady()) {
+    sync.pending = true;
+    storeSyncCfg();
+    scheduleSync();
+    renderSyncStatus();
+  }
 }
 
 async function writeState() {
@@ -543,7 +550,8 @@ function viewHives() {
   }
   let html = '';
   const lb = state.meta.lastBackup;
-  if (state.logs.length >= 5 && (!lb || daysBetween(lb.slice(0, 10), today()) > 30)) {
+  const syncedRecently = syncReady() && sync.lastSync && Date.now() - new Date(sync.lastSync).getTime() < 30 * 86400000;
+  if (!syncedRecently && state.logs.length >= 5 && (!lb || daysBetween(lb.slice(0, 10), today()) > 30)) {
     html += `<div class="notice amber row between wrap"><span>Your records live only on this device. ${lb ? `Last backup ${fmtDate(lb.slice(0, 10))}.` : 'No backup yet.'}</span>
       <button class="btn small" data-action="export-json">Back up now</button></div>`;
   }
@@ -798,6 +806,35 @@ function viewMedicines() {
       <tbody>${rows}</tbody></table></div>` : '<div class="empty"><div class="big">💊</div><p class="muted">No treatments logged yet. Add one from a hive page.</p></div>'}`, 'medicines');
 }
 
+function syncSettingsHtml() {
+  const on = syncReady();
+  return `<div class="card stack">
+    ${on ? `<div id="sync-detail"></div>
+      <div class="btn-grid" style="margin:0">
+        <button class="btn primary" data-action="sync-now">🔄 Sync now</button>
+        <button class="btn danger" data-action="sync-disconnect">Disconnect</button>
+      </div>
+      <details class="small"><summary class="muted">Connection settings</summary>` :
+      `<p class="small" style="margin:0">Save every record to a <b>private</b> GitHub repo. Changes made with no signal are queued on your phone and uploaded automatically when you're back online. Every sync is a commit, so you keep a full history. Use the same settings on your phone and computer to keep them in step.</p>
+      <details class="small"><summary>How to set it up (5 minutes)</summary><ol>
+        <li>On GitHub create a new <b>private</b> repository, e.g. <code>hive-log-data</code>.</li>
+        <li>Go to <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">Settings → Developer settings → Fine-grained tokens → Generate new token</a>.</li>
+        <li>Repository access: <b>Only select repositories</b> → pick that repo. Permissions → Repository → <b>Contents: Read and write</b>. Pick an expiry (up to a year).</li>
+        <li>Copy the token and paste it below.</li>
+      </ol></details>`}
+    <form data-form="sync" autocomplete="off" ${on ? 'style="margin-top:.5rem"' : ''}>
+      <div class="field"><label for="s-owner">GitHub username</label><input id="s-owner" type="text" name="owner" value="${esc(sync.owner || '')}" autocapitalize="off" spellcheck="false" placeholder="e.g. jbroadway14"></div>
+      <div class="field"><label for="s-repo">Private repo name</label><input id="s-repo" type="text" name="repo" value="${esc(sync.repo || '')}" autocapitalize="off" spellcheck="false" placeholder="hive-log-data"></div>
+      <div class="field"><label for="s-token">Access token</label><input id="s-token" type="password" name="token" value="" autocapitalize="off" spellcheck="false" placeholder="${sync.token ? 'Saved — leave blank to keep' : 'github_pat_…'}">
+        <div class="hint">Stored only on this device. It is never put in backups or in the synced file.</div></div>
+      <div class="field"><label for="s-device">This device's name (optional)</label><input id="s-device" type="text" name="device" value="${esc(sync.device || '')}" placeholder="e.g. Phone"><div class="hint">Shown in the GitHub commit history.</div></div>
+      <div class="field"><label for="s-path">File name in repo</label><input id="s-path" type="text" name="path" value="${esc(sync.path || 'hive-log.json')}" autocapitalize="off" spellcheck="false"></div>
+      <button class="btn ${on ? '' : 'primary'} block" type="submit">Save &amp; sync</button>
+    </form>
+    ${on ? '</details>' : ''}
+  </div>`;
+}
+
 function viewSettings() {
   const s = state.settings;
   const counts = Object.keys(KINDS).map(k => [k, state.logs.filter(l => l.kind === k).length]);
@@ -807,9 +844,12 @@ function viewSettings() {
       <span class="muted small">${state.hives.filter(h => h.apiaryId === a.id && isActive(h)).length} hives</span></a>`).join('')}
     <a class="btn block" href="#/apiary/new">+ Add apiary</a>
 
-    <h2>Backup &amp; sync</h2>
+    <h2>GitHub sync</h2>
+    ${syncSettingsHtml()}
+
+    <h2>Backup file</h2>
     <div class="card stack">
-      <p class="small" style="margin:0">Everything is stored only on this device. Download a backup regularly. Importing a backup <b>merges</b> it with what's here (newest edit wins), so you can copy records between your phone and computer.</p>
+      <p class="small" style="margin:0">${syncReady() ? 'Your records are synced to GitHub, but a downloaded backup is still a good safety net.' : 'Everything is stored only on this device. Download a backup regularly.'} Importing a backup <b>merges</b> it with what's here (newest edit wins), so you can copy records between your phone and computer.</p>
       <p class="small muted" style="margin:0">Last backup: ${state.meta.lastBackup ? fmtDate(state.meta.lastBackup.slice(0, 10)) : 'never'} · <span id="persist-status"></span></p>
       <div class="btn-grid" style="margin:0">
         <button class="btn primary" data-action="export-json">⬇️ Download backup</button>
@@ -838,6 +878,7 @@ function viewSettings() {
     <h2>Danger zone</h2>
     <button class="btn danger block" data-action="wipe">Delete all data on this device</button>
   `, 'settings');
+  renderSyncStatus(syncing ? 'syncing' : undefined);
   if (navigator.storage && navigator.storage.persisted) {
     navigator.storage.persisted().then(p => { const el = $('#persist-status'); if (el) el.textContent = p ? 'storage protected from clean-up' : 'browser may clear storage if space runs low'; });
   }
@@ -931,6 +972,210 @@ function saveDraft(form) {
   try { localStorage.setItem(draftKey(kind, form.dataset.hive), JSON.stringify(data)); } catch (_) { /* ignore */ }
 }
 
+/* ---------- GitHub sync ----------
+   Records are pushed as one JSON file to a PRIVATE GitHub repo using a
+   fine-grained token stored only on this device (never in backups or the
+   synced file). Each sync = pull, merge, push; every push is a commit, so
+   the repo keeps a full history. Works offline: changes queue until signal. */
+
+const SYNC_KEY = 'hivelog:sync';
+let sync = loadSyncCfg();
+let syncTimer = null;
+let syncing = null;
+let changeSeq = 0; // bumped on every local save, so edits made mid-sync aren't lost
+
+function loadSyncCfg() {
+  try { return JSON.parse(localStorage.getItem(SYNC_KEY) || 'null') || {}; } catch (_) { return {}; }
+}
+function storeSyncCfg() {
+  try { localStorage.setItem(SYNC_KEY, JSON.stringify(sync)); } catch (_) { /* ignore */ }
+}
+const syncReady = () => !!(sync.owner && sync.repo && sync.token);
+
+function scheduleSync(delay = 3000) {
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(() => syncNow(), delay);
+}
+
+function syncPayload() {
+  const byId = (a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  return {
+    app: 'hive-log',
+    version: 1,
+    apiaries: [...state.apiaries].sort(byId),
+    hives: [...state.hives].sort(byId),
+    logs: [...state.logs].sort(byId),
+    deleted: Object.fromEntries(Object.entries(state.deleted).sort()),
+  };
+}
+
+function b64encode(str) {
+  const bytes = new TextEncoder().encode(str);
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+function b64decode(b64) {
+  const bin = atob(b64.replace(/\s/g, ''));
+  return new TextDecoder().decode(Uint8Array.from(bin, c => c.charCodeAt(0)));
+}
+
+function gh(path, { method = 'GET', body, accept = 'application/vnd.github+json', cfg = sync } = {}) {
+  const headers = { Authorization: `Bearer ${cfg.token}`, Accept: accept, 'X-GitHub-Api-Version': '2022-11-28' };
+  if (body) headers['Content-Type'] = 'application/json';
+  return fetch(`https://api.github.com${path}`, { method, headers, body, cache: 'no-store' });
+}
+
+async function ghError(res) {
+  let detail = '';
+  try { detail = (await res.json()).message || ''; } catch (_) { /* ignore */ }
+  const msg = {
+    401: 'GitHub rejected the token — it may have expired or been mistyped.',
+    403: /rate limit/i.test(detail) ? 'GitHub rate limit hit — try again later.' : 'The token is not allowed to write to this repo (needs Contents: Read and write).',
+    404: 'Repo not found — check the owner / repo name and that the token has access to it.',
+  }[res.status] || `GitHub error ${res.status}${detail ? `: ${detail}` : ''}`;
+  const err = new Error(msg);
+  err.status = res.status;
+  return err;
+}
+
+const contentsUrl = () => `/repos/${encodeURIComponent(sync.owner)}/${encodeURIComponent(sync.repo)}/contents/${(sync.path || 'hive-log.json').split('/').map(encodeURIComponent).join('/')}`;
+
+async function pullRemote() {
+  const res = await gh(contentsUrl());
+  if (res.status === 404) return { sha: null, text: null };
+  if (!res.ok) throw await ghError(res);
+  const meta = await res.json();
+  let text;
+  if (meta.encoding === 'base64') {
+    text = b64decode(meta.content || '');
+  } else {
+    // Files over 1 MB come without inline content; fetch the raw bytes instead.
+    const raw = await gh(contentsUrl(), { accept: 'application/vnd.github.raw+json' });
+    if (!raw.ok) throw await ghError(raw);
+    text = await raw.text();
+  }
+  return { sha: meta.sha, text: text.trim() ? text : null };
+}
+
+async function pushRemote(text, sha) {
+  const n = state.logs.length;
+  const message = `Hive Log sync${sync.device ? ` from ${sync.device}` : ''} (${n} record${n === 1 ? '' : 's'})`;
+  const res = await gh(contentsUrl(), { method: 'PUT', body: JSON.stringify({ message, content: b64encode(text), ...(sha ? { sha } : {}) }) });
+  if (!res.ok) throw await ghError(res);
+}
+
+const onFormRoute = () => /^#\/(log|apiary|settings)|\/(new|edit)\b/.test(location.hash);
+
+function syncNow({ manual = false } = {}) {
+  if (!syncReady()) return Promise.resolve();
+  if (!navigator.onLine) {
+    renderSyncStatus();
+    if (manual) toast('No signal — will sync when you’re back online');
+    return Promise.resolve();
+  }
+  if (syncing) return syncing;
+  clearTimeout(syncTimer);
+  syncing = (async () => {
+    renderSyncStatus('syncing');
+    const before = JSON.stringify(syncPayload());
+    let pushedSeq = changeSeq;
+    try {
+      for (let attempt = 0; ; attempt++) {
+        const remote = await pullRemote();
+        if (remote.text) mergeInto(JSON.parse(remote.text));
+        pushedSeq = changeSeq;
+        const text = JSON.stringify(syncPayload());
+        if (text === remote.text) break; // already identical
+        try {
+          await pushRemote(text, remote.sha);
+          break;
+        } catch (e) {
+          // Another device pushed in between: pull again and re-merge.
+          if ((e.status === 409 || e.status === 422) && attempt < 3) continue;
+          throw e;
+        }
+      }
+      sync.lastSync = nowIso();
+      sync.lastError = '';
+      sync.pending = changeSeq !== pushedSeq;
+      storeSyncCfg();
+      if (sync.pending) scheduleSync();
+      if (JSON.stringify(syncPayload()) !== before) {
+        await writeState();
+        if (!onFormRoute()) route();
+      }
+      if (manual) toast('Synced to GitHub ✓');
+    } catch (e) {
+      console.warn('Sync failed', e);
+      sync.lastError = e instanceof SyntaxError ? 'The file in the repo is not valid Hive Log data.' : (e.message || 'Network error');
+      storeSyncCfg();
+      if (manual) toast('Sync failed — see More');
+    } finally {
+      syncing = null;
+      renderSyncStatus();
+    }
+  })();
+  return syncing;
+}
+
+function relTime(iso) {
+  if (!iso) return 'never';
+  const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins} min ago`;
+  if (mins < 60 * 24) return `${Math.round(mins / 60)} h ago`;
+  return fmtDate(toYmd(new Date(iso)));
+}
+
+function syncStatus(phase) {
+  if (!syncReady()) return null;
+  if (phase === 'syncing') return { cls: 'info', short: '☁️ Syncing…', long: 'Syncing with GitHub…' };
+  if (!navigator.onLine) return { cls: sync.pending ? 'amber' : 'info', short: sync.pending ? '☁️ Offline · queued' : '☁️ Offline', long: sync.pending ? 'No signal — your changes are saved on this phone and will upload automatically when you’re back online.' : `No signal. Last synced ${relTime(sync.lastSync)}.` };
+  if (sync.lastError) return { cls: 'red', short: '⚠️ Sync error', long: `Last sync failed: ${sync.lastError}` };
+  if (sync.pending) return { cls: 'amber', short: '☁️ Waiting to sync', long: 'Changes waiting to upload.' };
+  return { cls: 'green', short: '☁️ Synced', long: `Synced ${relTime(sync.lastSync)} to ${sync.owner}/${sync.repo}.` };
+}
+
+function renderSyncStatus(phase) {
+  const st = syncStatus(phase);
+  const top = $('#topbar-extra');
+  if (top) top.innerHTML = st ? `<a href="#/settings" class="flag ${st.cls}" style="text-decoration:none">${esc(st.short)}</a>` : '';
+  const detail = $('#sync-detail');
+  if (detail && st) { detail.className = `notice ${st.cls} small`; detail.textContent = st.long; }
+}
+
+async function submitSync(form) {
+  const f = form.elements;
+  const cfg = {
+    ...sync,
+    owner: f.owner.value.trim(),
+    repo: f.repo.value.trim(),
+    path: f.path.value.trim() || 'hive-log.json',
+    device: f.device.value.trim(),
+    token: f.token.value.trim() || sync.token || '',
+  };
+  if (!cfg.owner || !cfg.repo || !cfg.token) return toast('Fill in owner, repo and token');
+  if (!navigator.onLine) return toast('Connect to the internet to set up sync');
+  const btn = form.querySelector('button[type=submit]');
+  btn.disabled = true;
+  btn.textContent = 'Checking…';
+  try {
+    const res = await gh(`/repos/${encodeURIComponent(cfg.owner)}/${encodeURIComponent(cfg.repo)}`, { cfg });
+    if (!res.ok) throw await ghError(res);
+    const repo = await res.json();
+    if (!repo.private) throw new Error(`${cfg.owner}/${cfg.repo} is PUBLIC — anyone could read your records. Use a private repo.`);
+    sync = { ...cfg, lastError: '', pending: true };
+    storeSyncCfg();
+    await syncNow({ manual: true });
+    viewSettings();
+  } catch (e) {
+    alert(e.message || 'Could not reach GitHub');
+    btn.disabled = false;
+    btn.textContent = 'Save & sync';
+  }
+}
+
 /* ---------- Import / export ---------- */
 
 function downloadFile(name, mime, text) {
@@ -959,6 +1204,14 @@ function exportJson() {
 }
 
 function mergeState(inc) {
+  const added = mergeInto(inc);
+  save();
+  return added;
+}
+
+// Merge another copy of the records into this one: union by id, newest edit wins,
+// deletions (tombstones) win over older edits.
+function mergeInto(inc) {
   if (!inc || typeof inc !== 'object' || !Array.isArray(inc.hives) || !Array.isArray(inc.logs) || !Array.isArray(inc.apiaries)) {
     throw new Error('This file is not a Hive Log backup.');
   }
@@ -975,7 +1228,6 @@ function mergeState(inc) {
     state[coll] = [...map.values()].filter(r => !(deleted[r.id] && deleted[r.id] >= (r.updatedAt || '')));
   }
   state.deleted = deleted;
-  save();
   return added;
 }
 
@@ -1091,8 +1343,14 @@ document.addEventListener('click', e => {
       if (confirm('Delete this apiary?')) { removeRec('apiaries', id); toast('Apiary deleted'); go('#/'); }
       return;
     }
+    case 'sync-now': return syncNow({ manual: true });
+    case 'sync-disconnect':
+      if (confirm('Stop syncing this device? Records already on GitHub stay there.')) {
+        sync = {}; storeSyncCfg(); renderSyncStatus(); viewSettings(); toast('Sync disconnected');
+      }
+      return;
     case 'wipe':
-      if (confirm('Delete ALL apiaries, hives and records on this device?') && confirm('Really? Have you downloaded a backup?')) {
+      if (confirm(`Delete ALL apiaries, hives and records on this device?${syncReady() ? ' (Synced records will download again on the next sync — disconnect sync first to stop that.)' : ''}`) && confirm('Really? Have you downloaded a backup?')) {
         state = blankState(); save(); toast('All data deleted'); go('#/');
       }
       return;
@@ -1138,6 +1396,7 @@ document.addEventListener('submit', e => {
     case 'hive': return submitHive(form);
     case 'log': return submitLog(form);
     case 'settings': return submitSettings(form);
+    case 'sync': return submitSync(form);
   }
 });
 
@@ -1155,6 +1414,15 @@ function applyTheme() {
   await loadState();
   applyTheme();
   route();
+  renderSyncStatus();
+  syncNow();
+  window.addEventListener('online', () => syncNow());
+  window.addEventListener('offline', () => renderSyncStatus());
+  document.addEventListener('visibilitychange', () => {
+    // Coming back to the app pulls other devices' changes; leaving it pushes ours.
+    if (document.visibilityState === 'visible' || sync.pending) syncNow();
+  });
+  setInterval(() => { if (sync.pending) syncNow(); else renderSyncStatus(); }, 60000);
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     navigator.serviceWorker.register('sw.js').catch(err => console.warn('SW registration failed', err));
   }

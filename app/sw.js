@@ -1,5 +1,5 @@
 // Bump VERSION whenever app files change so phones pick up the update.
-const VERSION = 'hivelog-v1';
+const VERSION = 'hivelog-v2';
 const SHELL = [
   './',
   'index.html',
