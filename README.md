@@ -79,9 +79,9 @@ Date · supers/frames taken · honey weight (kg) · honey type (spring/OSR, summ
    on private repos needs a paid GitHub plan. Either make the repo public (only the app
    code is in it; your hive data never leaves your phone) or use GitHub Pro.
 2. Go to **Settings → Pages → Build and deployment → Source** and choose **GitHub Actions**.
-3. Merge this work into `main`. The workflow `.github/workflows/pages.yml` publishes the
-   `app/` folder to `https://jbroadway14.github.io/Claude/`. You can also re-run it from
-   the Actions tab ("Run workflow").
+3. The workflow `.github/workflows/pages.yml` publishes the `app/` folder to
+   `https://jbroadway14.github.io/Claude/` on every push to the repo's main branch.
+   You can also re-run it from the **Actions** tab ("Run workflow").
 4. Open that link on your phone:
    - **iPhone (Safari):** Share → *Add to Home Screen*
    - **Android (Chrome):** ⋮ → *Install app*

@@ -2,7 +2,7 @@ name: Deploy Hive Log to GitHub Pages
 
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, 'claude/beehive-inspection-tracker-4fltpx']
     paths: ['app/**', '.github/workflows/pages.yml']
   workflow_dispatch:
 
